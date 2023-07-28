@@ -34,11 +34,16 @@ import android.media.ExifInterface;
 import android.media.MediaScannerConnection;
 import android.media.MediaScannerConnection.MediaScannerConnectionClient;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
-import android.support.v4.content.FileProvider;
+import androidx.core.content.FileProvider;
+
+import android.provider.Settings;
 import android.util.Base64;
+
+import com.enduser.testapp.BuildConfig;
 
 import org.apache.cordova.BuildHelper;
 import org.apache.cordova.CallbackContext;
@@ -119,7 +124,23 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
     private boolean orientationCorrected;   // Has the picture's orientation been corrected
     private boolean allowEdit;              // Should we allow the user to crop the image.
 
-    protected final static String[] permissions = { Manifest.permission.CAMERA, Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE };
+    private static String[] permissions;
+    static {
+        if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions = new String[] {
+                    Manifest.permission.READ_MEDIA_AUDIO,
+                    Manifest.permission.READ_MEDIA_VIDEO,
+                    Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.CAMERA,
+            };
+        } else {
+            permissions = new String[] {
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    Manifest.permission.CAMERA
+            };
+        }
+    }
 
     public CallbackContext callbackContext;
     private int numPics;
@@ -143,9 +164,17 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
         this.callbackContext = callbackContext;
         //Adding an API to CoreAndroid to get the BuildConfigValue
         //This allows us to not make this a breaking change to embedding
-        this.applicationId = (String) BuildHelper.getBuildConfigValue(cordova.getActivity(), "APPLICATION_ID");
-        this.applicationId = preferences.getString("applicationId", this.applicationId);
 
+        // Commented these two lines due to app crash opening the camera
+        // this.applicationId = (String) BuildHelper.getBuildConfigValue(cordova.getActivity(), "APPLICATION_ID");
+        // this.applicationId = preferences.getString("applicationId", this.applicationId);
+
+        if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !Environment.isExternalStorageManager()) {
+            Uri uri = Uri.parse("package:" + BuildConfig.APPLICATION_ID);
+            Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, uri);
+            cordova.getActivity().startActivity(intent);
+        }
+        this.applicationId = cordova.getActivity().getPackageName();
 
         if (action.equals(TAKE_PICTURE_ACTION)) {
             this.srcType = CAMERA;
@@ -190,9 +219,14 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
                     this.callTakePicture(destType, encodingType);
                 }
                 else if ((this.srcType == PHOTOLIBRARY) || (this.srcType == SAVEDPHOTOALBUM)) {
-                    // FIXME: Stop always requesting the permission
-                    if(!PermissionHelper.hasPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)) {
-                        PermissionHelper.requestPermission(this, SAVE_TO_ALBUM_SEC, Manifest.permission.READ_EXTERNAL_STORAGE);
+                    if ((!PermissionHelper.hasPermission(this, Manifest.permission.READ_MEDIA_IMAGES) ||
+                            !PermissionHelper.hasPermission(this, Manifest.permission.READ_MEDIA_AUDIO) ||
+                            !PermissionHelper.hasPermission(this, Manifest.permission.READ_MEDIA_VIDEO) ||
+                            !PermissionHelper.hasPermission(this, Manifest.permission.CAMERA)) &&
+                            (( !PermissionHelper.hasPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) ||
+                                    !PermissionHelper.hasPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)))
+                    ){
+                        PermissionHelper.requestPermissions(this, SAVE_TO_ALBUM_SEC, permissions);
                     } else {
                         this.getImage(this.srcType, destType, encodingType);
                     }
@@ -220,7 +254,17 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
     //--------------------------------------------------------------------------
 
     private String getTempDirectoryPath() {
-        File cache = cordova.getActivity().getCacheDir();
+        File cache = null;
+
+        // SD Card Mounted
+        if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
+            cache = cordova.getActivity().getExternalCacheDir();
+        }
+        // Use internal storage
+        else {
+            cache = cordova.getActivity().getCacheDir();
+        }
+
         // Create the cache directory if it doesn't exist
         cache.mkdirs();
         return cache.getAbsolutePath();
@@ -241,42 +285,14 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
      * @param encodingType           Compression quality hint (0-100: 0=low quality & high compression, 100=compress of max quality)
      */
     public void callTakePicture(int returnType, int encodingType) {
-        boolean saveAlbumPermission = PermissionHelper.hasPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-                && PermissionHelper.hasPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE);
-        boolean takePicturePermission = PermissionHelper.hasPermission(this, Manifest.permission.CAMERA);
-
-        // CB-10120: The CAMERA permission does not need to be requested unless it is declared
-        // in AndroidManifest.xml. This plugin does not declare it, but others may and so we must
-        // check the package info to determine if the permission is present.
-
-        if (!takePicturePermission) {
-            takePicturePermission = true;
-            try {
-                PackageManager packageManager = this.cordova.getActivity().getPackageManager();
-                String[] permissionsInPackage = packageManager.getPackageInfo(this.cordova.getActivity().getPackageName(), PackageManager.GET_PERMISSIONS).requestedPermissions;
-                if (permissionsInPackage != null) {
-                    for (String permission : permissionsInPackage) {
-                        if (permission.equals(Manifest.permission.CAMERA)) {
-                            takePicturePermission = false;
-                            break;
-                        }
-                    }
-                }
-            } catch (NameNotFoundException e) {
-                // We are requesting the info for our package, so this should
-                // never be caught
-            }
-        }
-
-        if (takePicturePermission && saveAlbumPermission) {
-            takePicture(returnType, encodingType);
-        } else if (saveAlbumPermission && !takePicturePermission) {
-            PermissionHelper.requestPermission(this, TAKE_PIC_SEC, Manifest.permission.CAMERA);
-        } else if (!saveAlbumPermission && takePicturePermission) {
-            PermissionHelper.requestPermissions(this, TAKE_PIC_SEC,
-                    new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE});
-        } else {
-            PermissionHelper.requestPermissions(this, TAKE_PIC_SEC, permissions);
+        if ((!PermissionHelper.hasPermission(this, Manifest.permission.READ_MEDIA_IMAGES) ||
+                !PermissionHelper.hasPermission(this, Manifest.permission.READ_MEDIA_AUDIO) ||
+                !PermissionHelper.hasPermission(this, Manifest.permission.READ_MEDIA_VIDEO) ||
+                !PermissionHelper.hasPermission(this, Manifest.permission.CAMERA)) &&
+                (( !PermissionHelper.hasPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) ||
+                        !PermissionHelper.hasPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)))
+        ) {
+            PermissionHelper.requestPermissions(this, SAVE_TO_ALBUM_SEC, permissions);
         }
     }
 
