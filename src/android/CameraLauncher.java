@@ -43,8 +43,6 @@ import androidx.core.content.FileProvider;
 import android.provider.Settings;
 import android.util.Base64;
 
-import com.enduser.testapp.BuildConfig;
-
 import org.apache.cordova.BuildHelper;
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
@@ -169,11 +167,6 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
         // this.applicationId = (String) BuildHelper.getBuildConfigValue(cordova.getActivity(), "APPLICATION_ID");
         // this.applicationId = preferences.getString("applicationId", this.applicationId);
 
-        if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !Environment.isExternalStorageManager()) {
-            Uri uri = Uri.parse("package:" + BuildConfig.APPLICATION_ID);
-            Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, uri);
-            cordova.getActivity().startActivity(intent);
-        }
         this.applicationId = cordova.getActivity().getPackageName();
 
         if (action.equals(TAKE_PICTURE_ACTION)) {
