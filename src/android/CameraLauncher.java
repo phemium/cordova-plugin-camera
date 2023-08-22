@@ -167,7 +167,6 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
         // this.applicationId = (String) BuildHelper.getBuildConfigValue(cordova.getActivity(), "APPLICATION_ID");
         // this.applicationId = preferences.getString("applicationId", this.applicationId);
 
-        this.applicationId = cordova.getActivity().getPackageName();
 
         if (action.equals(TAKE_PICTURE_ACTION)) {
             this.srcType = CAMERA;
